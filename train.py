@@ -1,122 +1,168 @@
+import os
+from pathlib import Path
+import numpy as np
+from PIL import Image
+from torchvision import transforms
+import torch.nn.functional as F
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-from skimage.metrics import structural_similarity as ssim
-import numpy as np
+from torch.utils.data import DataLoader, Dataset
 
-# Function for calculating PSNR
+# Custom SSIM function used during training
+def ssim(img1, img2, window_size=11, size_average=True):
+    C1 = 0.01 ** 2
+    C2 = 0.03 ** 2
+    mu1 = F.avg_pool2d(img1, window_size, stride=1, padding=window_size//2, count_include_pad=False)
+    mu2 = F.avg_pool2d(img2, window_size, stride=1, padding=window_size//2, count_include_pad=False)
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
+    mu1_mu2 = mu1 * mu2
+    sigma1_sq = F.avg_pool2d(img1 * img1, window_size, stride=1, padding=window_size//2, count_include_pad=False) - mu1_sq
+    sigma2_sq = F.avg_pool2d(img2 * img2, window_size, stride=1, padding=window_size//2, count_include_pad=False) - mu2_sq
+    sigma12 = F.avg_pool2d(img1 * img2, window_size, stride=1, padding=window_size//2, count_include_pad=False) - mu1_mu2
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
+
+    if size_average:
+        return ssim_map.mean()
+    else:
+        return ssim_map.mean(1).mean(1).mean(1)
+
+# Custom dataset class (accepts 2 folder with images)
+class CustomDataset(Dataset):
+    def __init__(self, img_folder_A, img_folder_B, transform=None):
+        self.img_folder_A = img_folder_A
+        self.img_folder_B = img_folder_B
+        self.transform = transform
+        self.image_list_A = os.listdir(self.img_folder_A)
+        self.image_list_B = os.listdir(self.img_folder_B)
+
+    def __len__(self):
+        return len(self.image_list_A)
+
+    def __getitem__(self, idx):
+        img_name_A = os.path.join(self.img_folder_A, self.image_list_A[idx])
+        img_name_B = os.path.join(self.img_folder_B, self.image_list_B[idx])
+        
+        image_A = Image.open(img_name_A)
+        image_B = Image.open(img_name_B)
+        
+        if self.transform:
+            image_A = self.transform(image_A)
+            image_B = self.transform(image_B)
+
+        return image_A, image_B
+
+# CNN model
+class DeeperCNN(nn.Module):
+    def __init__(self):
+        super(DeeperCNN, self).__init__()
+
+        # Encoder
+        self.enc_conv1 = nn.Sequential(nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1), nn.ReLU())
+        self.enc_conv2 = nn.Sequential(nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1), nn.ReLU())
+        self.enc_conv3 = nn.Sequential(nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1), nn.ReLU())
+        self.enc_conv4 = nn.Sequential(nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1), nn.ReLU())
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # Middle
+        self.middle_conv1 = nn.Sequential(nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1), nn.ReLU())
+        self.middle_conv2 = nn.Sequential(nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1), nn.ReLU())
+        self.middle_conv3 = nn.Sequential(nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1), nn.ReLU())
+
+        # Decoder
+        self.dec_upconv3 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
+        self.dec_conv3 = nn.Sequential(nn.Conv2d(128 + 64, 128, kernel_size=3, stride=1, padding=1), nn.ReLU())
+        self.dec_upconv2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
+        self.dec_conv2 = nn.Sequential(nn.Conv2d(64 + 64, 64, kernel_size=3, stride=1, padding=1), nn.ReLU())
+
+        self.dec_upconv1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
+        self.dec_conv1 = nn.Sequential(nn.Conv2d(32 + 32, 32, kernel_size=3, stride=1, padding=1), nn.ReLU())
+
+        # Additional upsample layer to ensure the output is 256x256
+        self.upsample = nn.ConvTranspose2d(32, 32, kernel_size=2, stride=2)
+        self.final_conv = nn.Sequential(nn.Conv2d(32, 3, kernel_size=3, stride=1, padding=1), nn.Sigmoid())
+
+    def forward(self, x):
+        # Encoder
+        enc1 = self.enc_conv1(x)
+        enc2 = self.enc_conv2(self.pool(enc1))
+        enc3 = self.enc_conv3(self.pool(enc2))
+        enc4 = self.enc_conv4(self.pool(enc3))
+
+        # Middle
+        middle = self.middle_conv3(self.middle_conv2(self.middle_conv1(self.pool(enc4))))
+
+        # Decoder
+        dec3 = self.dec_upconv3(middle)
+        dec3 = torch.cat((dec3, enc4), dim=1)
+        dec3 = self.dec_conv3(dec3)
+        dec2 = self.dec_upconv2(dec3)
+        dec2 = torch.cat((dec2, enc3), dim=1)
+        dec2 = self.dec_conv2(dec2)
+        dec1 = self.dec_upconv1(dec2)
+        dec1 = torch.cat((dec1, enc2), dim=1)
+        dec1 = self.dec_conv1(dec1)
+
+        # Upsample to 256x256
+        dec1 = self.upsample(dec1)
+        out = self.final_conv(dec1)
+        return out
+
+
+# PSNR calculation
 def calculate_psnr(img1, img2):
     mse = np.mean((img1 - img2) ** 2)
     if mse == 0:
         return 100
-    PIXEL_MAX = 255.0
-    return 20 * np.log10(PIXEL_MAX / np.sqrt(mse))
-    
-# Define the CNN Model
-class ColorReductionNet(nn.Module):
-    def __init__(self):
-        super(ColorReductionNet, self).__init__()
-        
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        )
-        
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=1, padding=1),
-            nn.Sigmoid()
-        )
-    
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
-        return x
+    return 20 * np.log10(255.0 / np.sqrt(mse))
 
+def train_set(random_crop_val, dname, dataset_in, dataset_out):
+    print(dname+str(random_crop_val)+".log")
+    transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomResizedCrop(size=(256, 256), scale=(random_crop_val, 1), antialias=True)
+            ])
+    train_dataset = CustomDataset(dataset_in, dataset_out, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=2048, shuffle=False, num_workers=12)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = DeeperCNN()
+    for i in range(15, 0):
+        file = Path(dname+{epoch}+".pth")
+        if file.is_file():
+            model.load_state_dict(torch.load(dname+{epoch}+".pth"))
+            model.eval()
+            break
+    model = model.to(device)
 
-# Preprocessing
-transform = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.ToTensor()
-])
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
-dataset_A = datasets.ImageFolder(root='./test_images_256', transform=transform)
-dataset_B = datasets.ImageFolder(root='./test_images_256_noised', transform=transform)
-
-loader_A = DataLoader(dataset_A, batch_size=16, shuffle=False)
-loader_B = DataLoader(dataset_B, batch_size=16, shuffle=False)
-
-# Put the model on GPU
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-
-model = ColorReductionNet().to(device)
-criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-num_epochs = 20
-# Train the model
-for epoch in range(num_epochs):
-    epoch_avg_psnr = 0
-    epoch_avg_ssim = 0
-    sample_count = 0
-    
-    for batch_idx, ((data_A, _), (data_B, _)) in enumerate(zip(loader_A, loader_B)):
-        data_A = data_A.to(device)
-        data_B = data_B.to(device)
-        
-        optimizer.zero_grad()
-        outputs = model(data_A)
-        loss = criterion(outputs, data_B)
-        
-        loss.backward()
-        optimizer.step()
-        
-        # Convert tensors to numpy arrays for PSNR and SSIM calculations
-        data_A_np = data_A.cpu().detach().numpy().transpose((0, 2, 3, 1))
-        outputs_np = outputs.cpu().detach().numpy().transpose((0, 2, 3, 1))
-        
-        for i in range(data_A_np.shape[0]):
-            data_scaled = (data_A_np[i] * 255).astype(np.uint8)
-            output_scaled = (outputs_np[i] * 255).astype(np.uint8)
+    # Training
+    n_epochs = 15
+    for epoch in range(1, n_epochs + 1):
+        epoch_loss = 0.0
+        epoch_psnr = 0.0
+        for i, data in enumerate(train_loader, 0):
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            ssim_loss = ssim(outputs, labels, window_size=11, size_average=True)
+            loss = 1 - ssim_loss
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+            psnr = calculate_psnr(outputs.detach().cpu().numpy(), labels.detach().cpu().numpy())
+            epoch_psnr += psnr
             
-            cur_psnr = calculate_psnr(data_scaled, output_scaled)
-            cur_ssim = ssim(data_scaled, output_scaled, multichannel=True)
-            
-            epoch_avg_psnr += cur_psnr
-            epoch_avg_ssim += cur_ssim
-            sample_count += 1
-        
-        print(f"Epoch {epoch+1}/{num_epochs}, Batch {batch_idx+1}/{len(loader_A)}, Loss: {loss.item():.4f}")
-    
-    epoch_avg_psnr /= sample_count
-    epoch_avg_ssim /= sample_count
-    
-    print(f"After Epoch {epoch+1}, Average PSNR: {epoch_avg_psnr:.4f}, Average SSIM: {epoch_avg_ssim:.4f}")
-    
-    with open('train.log', 'a') as f:
-        f.write(f"\nEpoch {epoch+1}/{num_epochs}, Loss: {loss.item()}, Average PSNR: {epoch_avg_psnr}, Average SSIM: {epoch_avg_ssim}")
-    
-    # Save model for the current epoch
-    torch.save(model.state_dict(), f"color_reduction_net_epoch_{epoch+1}.pth")
+            print(f"Epoch [{epoch}/{n_epochs}], Batch [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}, PSNR: {psnr:.4f}")
+        avg_epoch_loss = epoch_loss / len(train_loader)
+        avg_epoch_psnr = epoch_psnr / len(train_loader)
 
-# Test the model
-model.eval()
-with torch.no_grad():
-    for data, _ in loader_A:
-        data = data.to(device)
-        output = model(data)
+        print(f"Epoch [{epoch}], Avg Loss: {avg_epoch_loss:.4f}, Avg PSNR: {avg_epoch_psnr:.4f}")
+        with open(dname+str(random_crop_val)+".log", "a") as f:
+            f.write(f"Epoch [{epoch}], Avg Loss: {avg_epoch_loss:.4f}, Avg PSNR: {avg_epoch_psnr:.4f}\n")
+            torch.save(model.state_dict(), dname+{epoch}+".pth")
+
+if __name__ == '__main__':
+    train_set(0.9, "camera-dataset-jpeg100-wavelet", f"camera-dataset-jpeg100-wavelet/all", "CameraDatasetJPEG100-crop256/all")
