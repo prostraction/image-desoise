@@ -118,28 +118,32 @@ def calculate_psnr(img1, img2):
     return 20 * np.log10(255.0 / np.sqrt(mse))
 
 def train_set(random_crop_val, dname, dataset_in, dataset_out):
+    dname = dname + "_"
     print(dname+str(random_crop_val)+".log")
     transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.RandomResizedCrop(size=(256, 256), scale=(random_crop_val, 1), antialias=True)
             ])
     train_dataset = CustomDataset(dataset_in, dataset_out, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=2048, shuffle=False, num_workers=12)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=False, num_workers=12)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = DeeperCNN()
-    for i in range(15, 0):
-        file = Path(dname+{epoch}+".pth")
+    start_epoch = 1
+    n_epochs = 16
+    for i in range(n_epochs, start_epoch, -1):
+        file = Path(dname+str(i)+".pth")
         if file.is_file():
-            model.load_state_dict(torch.load(dname+{epoch}+".pth"))
+            model.load_state_dict(torch.load(dname+str(i)+".pth"))
+            print("Loaded: ", file.name)
             model.eval()
+            start_epoch = i + 1
             break
     model = model.to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
     # Training
-    n_epochs = 15
-    for epoch in range(1, n_epochs + 1):
+    for epoch in range(start_epoch, n_epochs):
         epoch_loss = 0.0
         epoch_psnr = 0.0
         for i, data in enumerate(train_loader, 0):
@@ -162,7 +166,8 @@ def train_set(random_crop_val, dname, dataset_in, dataset_out):
         print(f"Epoch [{epoch}], Avg Loss: {avg_epoch_loss:.4f}, Avg PSNR: {avg_epoch_psnr:.4f}")
         with open(dname+str(random_crop_val)+".log", "a") as f:
             f.write(f"Epoch [{epoch}], Avg Loss: {avg_epoch_loss:.4f}, Avg PSNR: {avg_epoch_psnr:.4f}\n")
-            torch.save(model.state_dict(), dname+{epoch}+".pth")
+            torch.save(model.state_dict(), dname+str(epoch)+".pth")
 
 if __name__ == '__main__':
-    train_set(0.9, "camera-dataset-jpeg100-wavelet", f"camera-dataset-jpeg100-wavelet/all", "CameraDatasetJPEG100-crop256/all")
+    # No RC — value = 1
+    train_set(1, "models/iso40000-07-10-r-balanced", f"noised/all", "clean/all")

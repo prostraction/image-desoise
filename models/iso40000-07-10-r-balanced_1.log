@@ -1,0 +1,15 @@
+Epoch [1], Avg Loss: 0.1902, Avg PSNR: 72.6796
+Epoch [2], Avg Loss: 0.1046, Avg PSNR: 77.8616
+Epoch [3], Avg Loss: 0.0847, Avg PSNR: 78.8848
+Epoch [4], Avg Loss: 0.0759, Avg PSNR: 79.2722
+Epoch [5], Avg Loss: 0.0709, Avg PSNR: 79.6032
+Epoch [6], Avg Loss: 0.0656, Avg PSNR: 80.4151
+Epoch [7], Avg Loss: 0.0563, Avg PSNR: 82.6215
+Epoch [8], Avg Loss: 0.0527, Avg PSNR: 83.1114
+Epoch [9], Avg Loss: 0.0502, Avg PSNR: 83.4272
+Epoch [10], Avg Loss: 0.0484, Avg PSNR: 83.6408
+Epoch [11], Avg Loss: 0.0472, Avg PSNR: 83.8248
+Epoch [12], Avg Loss: 0.0459, Avg PSNR: 84.0012
+Epoch [13], Avg Loss: 0.0451, Avg PSNR: 84.1308
+Epoch [14], Avg Loss: 0.0442, Avg PSNR: 84.2345
+Epoch [15], Avg Loss: 0.0434, Avg PSNR: 84.3299
