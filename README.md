@@ -14,6 +14,6 @@ This model trains and works with real noises, which were captured by real camera
 ![demoiso40000](https://github.com/prostraction/image-desoise/assets/47314760/25e88dc2-8fa1-4b5e-95a4-9e5d8671ffdf)
 ![demoiso40000res](https://github.com/prostraction/image-desoise/assets/47314760/de7e8a59-51c5-4a0a-9ae1-9a4d7a258b06)
 
-### 3. Noised / Denoised comparison (ISO 128000). Model with ISO 40000 trained used.
+### 3. Noised / Denoised comparison (ISO 12800). Model with ISO 40000 trained used.
 ![demoiso12800](https://github.com/prostraction/image-desoise/assets/47314760/3bbbdc74-267c-4ff3-994b-1c70b620ddc1)
 ![demoiso12800res](https://github.com/prostraction/image-desoise/assets/47314760/11af6986-077d-40c1-93e1-b3ea85cfeed7)
